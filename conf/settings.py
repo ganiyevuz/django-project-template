@@ -16,8 +16,7 @@ load_dotenv()
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-__ENV_DEBUG = os.getenv('DJANGO_DEBUG')
-DEBUG = int(__ENV_DEBUG) if __ENV_DEBUG.isdigit() else __ENV_DEBUG == 'True'
+DEBUG = os.getenv('DJANGO_DEBUG', 'False').lower() in ['true', '1', 't']
 
 DISALLOWED_USER_AGENTS = [
     # re.compile(r'^.*Linux.*'),
@@ -27,6 +26,8 @@ DISALLOWED_USER_AGENTS = [
 ALLOWED_HOSTS = ['*']
 CORS_ORIGIN_ALLOW_ALL = True
 CORS_ALLOW_ALL_ORIGINS = True
+
+CSRF_TRUSTED_ORIGINS = []
 
 # Application definition
 
@@ -45,6 +46,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'drf_yasg',
     'django_filters',
+    'drf_standardized_errors',
     'corsheaders',
 ]
 
@@ -147,7 +149,7 @@ REST_FRAMEWORK = {
     'DEFAULT_FILTER_BACKENDS': (
         'django_filters.rest_framework.DjangoFilterBackend',
     ),
-    # 'EXCEPTION_HANDLER': 'shared.exceptions.custom_exception_handler',
+    "EXCEPTION_HANDLER": "drf_standardized_errors.handler.exception_handler",
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 100
     # 'DEFAULT_THROTTLE_CLASSES': [
@@ -224,3 +226,7 @@ if DEBUG:
     }
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+X_FRAME_OPTIONS = 'SAMEORIGIN'
+
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+DOMAIN = os.getenv('DOMAIN')
