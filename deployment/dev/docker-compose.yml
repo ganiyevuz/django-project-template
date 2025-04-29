@@ -1,0 +1,211 @@
+services:
+  backend:
+    image: backed_image_name:0.0.1
+    restart: unless-stopped
+    container_name: dev-backend
+    volumes:
+      - dev_static_volume:/app/static
+      - dev_media_volume:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DATABASE_USER}
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CACHE_BACKEND_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      DOMAIN: ${BACKEND_DOMAIN}
+    networks:
+      - app-network
+      - shared-network
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dev-web.rule: "Host(`${BACKEND_DOMAIN}`)"
+      traefik.http.routers.dev-web.entrypoints: "websecure"
+      traefik.http.routers.dev-web.tls.certresolver: "le"
+      traefik.http.services.dev-web.loadbalancer.server.port: "8000"
+      traefik.http.services.dev-web.loadbalancer.sticky: "true"
+      traefik.docker.network: "shared-network"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    container_name: dev-postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DATABASE_USER}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    container_name: dev-redis
+    command: [
+      "redis-server",
+      "--appendonly", "yes",
+      "--requirepass", "${REDIS_PASSWORD}",
+      "--maxmemory", "256mb",
+      "--maxmemory-policy", "allkeys-lru"
+    ]
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "PING" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nginx:
+    image: nginx:stable-alpine
+    restart: unless-stopped
+    volumes:
+      - dev_static_volume:/usr/share/nginx/html/static:ro
+      - dev_media_volume:/usr/share/nginx/html/media:ro
+      - ./logs/nginx:/var/log/nginx
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_started
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dev-staticfiles.rule: "Host(`${BACKEND_DOMAIN}`) && (PathPrefix(`/static`) || PathPrefix(`/media`))"
+      traefik.http.routers.dev-staticfiles.entrypoints: "websecure"
+      traefik.http.routers.dev-staticfiles.tls.certresolver: "le"
+      traefik.http.services.dev-staticfiles.loadbalancer.server.port: "80"
+      traefik.http.middlewares.static-compress.compress: "true"
+      traefik.http.routers.dev-staticfiles.middlewares: "static-compress"
+      traefik.docker.network: "shared-network"
+  db_backup:
+    image: ganiyevuz/postgres-backup-telegram
+    container_name: dev-db-backup
+    volumes:
+      - dev_postgres_backup:/backup
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=${DATABASE_NAME}
+      - POSTGRES_USER=${DATABASE_USER}
+      - POSTGRES_PASSWORD=${DATABASE_PASSWORD}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - BACKUP_KEEP_DAYS=7
+      - BACKUP_KEEP_WEEKS=4
+      - BACKUP_KEEP_MONTHS=6
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  prometheus:
+    container_name: dev-prometheus
+    volumes:
+      - prometheus_data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    networks:
+      - app-network
+      - shared-network
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dev-prometheus.rule: "Host(`${PROMETHEUS_DOMAIN}`)"
+      traefik.http.routers.dev-prometheus.entrypoints: "websecure"
+      traefik.http.routers.dev-prometheus.tls.certresolver: "le"
+      traefik.http.services.dev-prometheus.loadbalancer.server.port: "9090"
+      traefik.http.routers.dev-prometheus.middlewares: "prometheus-auth"
+
+  grafana:
+    container_name: dev-grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "true"
+      GF_SERVER_DOMAIN: "${GRAFANA_DOMAIN}"
+      GF_SERVER_ROOT_URL: "https://${GRAFANA_DOMAIN}"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-piechart-panel,grafana-simple-json-datasource"
+    networks:
+      - app-network
+      - shared-network
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dev-grafana.rule: "Host(`${GRAFANA_DOMAIN}`)"
+      traefik.http.routers.dev-grafana.entrypoints: "websecure"
+      traefik.http.routers.dev-grafana.tls.certresolver: "le"
+      traefik.http.services.dev-grafana.loadbalancer.server.port: "3000"
+
+volumes:
+  postgres_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  dev_static_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: /var/www/dev/static
+      o: bind
+  dev_media_volume:
+    driver: local
+    driver_opts:
+      type: none
+      device: /var/www/dev/media
+      o: bind
+  dev_postgres_backup:
+
+networks:
+  app-network:
+    driver: bridge
+  shared-network:
+    external: true
+    name: shared-network

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Exit on error
+set -e
+
+# Collect static files
+echo "Collecting static files..."
+python manage.py collectstatic --noinput
+
+# Run migrations
+echo "Running migrations..."
+python manage.py migrate --noinput
+
+# Start Gunicorn server
+echo "Starting Gunicorn..."
+exec gunicorn conf.wsgi:application --bind 0.0.0.0:8000 --workers 2

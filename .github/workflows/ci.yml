@@ -1,0 +1,159 @@
+name: 🚀 CI/CD Pipeline for Deployment
+
+on:
+  push:
+  #    branches: [ dev, master ] # Uncomment this line to enable the pipeline for both branches
+  pull_request:
+#    branches: [ master ] # Uncomment this line to enable the pipeline for pull requests to master
+
+env:
+  BACKEND_VERSION: v1.1
+  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/image-name
+
+jobs:
+  build-backend:
+    name: 🧱 Build & Push Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: 🔐 Setup SSH Access (for .env if needed)
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: 🔑 Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: ⚙️ Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: 🐳 Build & Push Backend Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./deployment/Dockerfile
+          tags: |
+            ${{ env.DOCKER_IMAGE }}:${{ env.BACKEND_VERSION }}
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: 🚀 Deploy to Server
+    runs-on: ubuntu-latest
+    needs: [ build-backend ]
+
+    steps:
+      - name: ⬇️ Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: 🛠️ Set Project Directory Based on Branch
+        id: set_project_dir
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
+            echo "PROJECT_DIR=/var/www/dev" >> $GITHUB_ENV
+            echo "COMPOSE_FILE=deployment/dev/docker-compose.yml" >> $GITHUB_ENV
+            echo "BACKEND_DOMAIN=${{ secrets.DEV_BACKEND_DOMAIN }}" >> $GITHUB_ENV
+          else
+            echo "PROJECT_DIR=/var/www/prod" >> $GITHUB_ENV
+            echo "COMPOSE_FILE=deployment/prod/docker-compose.yml" >> $GITHUB_ENV
+            echo "BACKEND_DOMAIN=${{ secrets.BACKEND_DOMAIN }}" >> $GITHUB_ENV
+          fi
+
+      - name: 🛠️ Generate .env for Backend
+        run: |
+          touch .env
+          echo "DJANGO_SECRET_KEY=${{ secrets.SECRET_KEY }}" >> .env
+          echo "DJANGO_DEBUG=${{ secrets.DEBUG }}" >> .env
+          echo "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}" >> .env
+          echo "DATABASE_NAME=${{ secrets.DATABASE_NAME }}" >> .env
+          echo "DATABASE_USER=postgres" >> .env
+          echo "DJANGO_SUPERUSER_EMAIL=${{ secrets.DJANGO_SUPERUSER_EMAIL }}" >> .env
+          echo "DJANGO_SUPERUSER_USERNAME=${{ secrets.DJANGO_SUPERUSER_USERNAME }}" >> .env
+          echo "DJANGO_SUPERUSER_PASSWORD=${{ secrets.DJANGO_SUPERUSER_PASSWORD }}" >> .env
+          echo "ESKIZ_EMAIL=${{ secrets.ESKIZ_EMAIL }}" >> .env
+          echo "ESKIZ_PASSWORD=${{ secrets.ESKIZ_PASSWORD }}" >> .env
+          echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> .env
+          echo "BACKEND_DOMAIN=${{ env.BACKEND_DOMAIN }}" >> .env
+          echo "BACKEND_VERSION=${{ env.BACKEND_VERSION }}" >> .env
+          echo "DOCKER_IMAGE=${{ env.DOCKER_IMAGE }}" >> .env
+          echo "TELEGRAM_CHAT_IDS=${{ secrets.TELEGRAM_CHAT_IDS }}" >> .env
+          echo "TELEGRAM_CHAT_ID=6990890693" >> .env
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
+
+      - name: 🔐 Setup SSH Access
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: 📁 Create Directories on Server
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
+            mkdir -p $PROJECT_DIR/static
+            mkdir -p $PROJECT_DIR/media
+          "
+
+      - name: 📤 Upload Files to Server
+        run: |
+          scp -o StrictHostKeyChecking=no deployment/deploy.sh .env ${{ env.COMPOSE_FILE }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$PROJECT_DIR/
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
+            chmod +x $PROJECT_DIR/deploy.sh
+          "
+
+      - name: 🚀 Deploy Backend on Server
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
+            cd $PROJECT_DIR && ./deploy.sh
+          "
+
+      - name: 🧹 Clean Up Docker Garbage
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
+            docker image prune -af && docker container prune -f
+          "
+      - name: ✅ Telegram Notification - Success
+        if: success()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          format: html
+          message: |
+            ✅ <b>Deployment Successful</b>
+            
+            <b>Branch:</b> ${{ github.ref }}
+            <b>Commit:</b> ${{ github.sha }}
+            <b>Committer:</b> ${{ github.actor }}
+            <b>Domain:</b> ${{ env.BACKEND_DOMAIN }}
+            <b>Backend Version:</b> <code>${{ env.BACKEND_VERSION }}</code>
+            
+            📜 <b>Logs:</b> <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">GitHub Actions Logs</a>
+            
+            Deployment was successful. All systems are operational.
+
+      - name: ❌ Telegram Notification - Failure
+        if: failure()
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_IDS }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          format: html
+          message: |
+            ❌ <b>Deployment Failed</b>
+            
+            <b>Branch:</b> ${{ github.ref }}
+            <b>Commit:</b> ${{ github.sha }}
+            <b>Committer:</b> ${{ github.actor }}
+            <b>Event:</b> ${{ github.event_name }}
+            <b>Domain:</b> ${{ env.BACKEND_DOMAIN }}
+            <b>Backend Version:</b> <code>${{ env.BACKEND_VERSION }}</code>
+            
+            📜 <b>Logs:</b> <a href="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}">GitHub Actions Logs</a>
+            
+            Please investigate the failure and take the necessary action.
