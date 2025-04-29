@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS builder
+FROM python:3.13-alpine AS builder 
 LABEL authors="Jakhongir"
 
 ENV PYTHONUNBUFFERED=1 \
@@ -19,14 +19,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY requirements/prod.txt .
 RUN pip install --upgrade pip && \
     pip install wheel && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements/prod.txt
 
 COPY . .
 
-FROM python:3.12-slim
+FROM python:3.13-alpine
 
 WORKDIR /app
 
@@ -34,7 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --from=builder /app /app
 
