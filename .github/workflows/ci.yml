@@ -1,10 +1,10 @@
 name: 🚀 CI/CD Pipeline for Deployment
-
-on:
-  push:
-  #    branches: [ dev, master ] # Uncomment this line to enable the pipeline for both branches
-  pull_request:
-#    branches: [ master ] # Uncomment this line to enable the pipeline for pull requests to master
+#
+#on:
+#  push:
+#      branches: [ dev, master ]
+#  pull_request:
+#    branches: [ master ]
 
 env:
   BACKEND_VERSION: v1.1
