@@ -135,21 +135,23 @@ USE_TZ = True
 
 # S3 / MinIO Storage Settings
 USE_S3_STORAGE = os.getenv('USE_S3_STORAGE', 'False').lower() in ['true', '1', 't']
+# DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 
 if USE_S3_STORAGE:
     # S3 / MinIO Storage
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-
-    AWS_ACCESS_KEY_ID = os.getenv('MINIO_ROOT_USER', 'minioadmin')
-    AWS_SECRET_ACCESS_KEY = os.getenv('MINIO_ROOT_PASSWORD', 'minioadmin')
-    AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME', 'media')
-    AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL', 'http://minio:9000')
+    STORAGES = {
+        "default": {
+            "BACKEND": "shared.storage_backends.MediaMinIOStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "shared.storage_backends.StaticMinIOStorage",
+        },
+    }
     AWS_S3_USE_SSL = os.getenv('AWS_S3_USE_SSL', 'False').lower() in ['true', '1', 't']
-    AWS_QUERYSTRING_AUTH = os.getenv('AWS_QUERYSTRING_AUTH', 'False').lower() in ['true', '1', 't']
-    AWS_S3_FILE_OVERWRITE = os.getenv('AWS_S3_FILE_OVERWRITE', 'False').lower() in ['true', '1', 't']
-    AWS_DEFAULT_ACL = os.getenv('AWS_DEFAULT_ACL', 'public-read')
+    AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME', None)
+    AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL', None)
+    AWS_DEFAULT_ACL = os.getenv('AWS_DEFAULT_ACL', None)
     AWS_S3_SIGNATURE_VERSION = os.getenv('AWS_S3_SIGNATURE_VERSION', 's3v4')
-    AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
 
     # Enable automatic file deletion when the corresponding object is deleted
     AWS_AUTO_CREATE_BUCKET = True
@@ -157,8 +159,9 @@ if USE_S3_STORAGE:
         'CacheControl': 'max-age=86400',
     }
 
-    # URL for media files
-    MEDIA_URL = f"{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/"
+    STATIC_URL = "static/"
+    STATICFILES_LOCATION = 'static'
+    MEDIA_FILES_LOCATION = 'media'
 else:
     # Local Storage
     STATIC_URL = "static/"
@@ -166,6 +169,7 @@ else:
 
     MEDIA_URL = "media/"
     MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
