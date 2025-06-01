@@ -107,7 +107,7 @@ services:
         condition: service_started
     labels:
       traefik.enable: "true"
-      traefik.http.routers.dev-staticfiles.rule: "Host(`${BACKEND_DOMAIN}`) && (PathPrefix(`/static`) || PathPrefix(`/media`))"
+      traefik.http.routers.dev-staticfiles.rule: "Host(`${CDN_DOMAIN}`)"
       traefik.http.routers.dev-staticfiles.entrypoints: "websecure"
       traefik.http.routers.dev-staticfiles.tls.certresolver: "le"
       traefik.http.services.dev-staticfiles.loadbalancer.server.port: "80"

@@ -1,8 +1,11 @@
 from django.urls import path
-from drf_yasg.openapi import Info
-from drf_yasg.views import get_schema_view
-from rest_framework.permissions import AllowAny
 
+from rest_framework.permissions import AllowAny
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularSwaggerView,
+    SpectacularRedocView,
+)
 from conf.settings import API_VERSION, BACKEND_DOMAIN
 
 
@@ -20,17 +23,9 @@ def get_dynamic_description(domain) -> str:
         return "Generic API"
 
 
-schema_view = get_schema_view(
-    Info(
-        title=get_dynamic_description(BACKEND_DOMAIN),
-        default_version=API_VERSION,
-    ),
-    public=True,
-    permission_classes=[AllowAny],
-)
 
 # Add `never_cache` to prevent caching of the schema view
 urlpatterns = [
-    path("", schema_view.with_ui("swagger", cache_timeout=0), name="schema-swagger-ui"),
-    path("redoc", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
+    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+    path('', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
 ]

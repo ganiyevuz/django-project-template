@@ -39,7 +39,7 @@ INSTALLED_APPS = [
 
     # Third-party libraries
     'rest_framework',
-    'drf_yasg',
+    'drf_spectacular',
     'django_filters',
     'drf_standardized_errors',
     'corsheaders',
@@ -197,19 +197,44 @@ REST_FRAMEWORK = {
     # }
 }
 
-SWAGGER_SETTINGS = {
-    'SECURITY_DEFINITIONS': {
-        'Bearer': {
-            'type': 'apiKey',
-            'name': 'Authorization',
-            'in': 'header',
-            'description': 'Type in the *\'Value\'* input box below: **\'Bearer &lt;JWT&gt;\'**, where JWT is the '
-                           'JSON web token you get back when logging in.'
-        }
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'API',
+    'DESCRIPTION': 'API for project',
+    'VERSION': '1.0.0',
+    "SERVE_INCLUDE_SCHEMA": False,
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SORT_OPERATION_PARAMETERS": True,
+    "SCHEMA_PATH_PREFIX": r"/api/v[0-9]/[a-zA-Z0-9\-\_]+",
+    # 'SCHEMA_PATH_PREFIX_TRIM': True,
+    "SERVE_PERMISSIONS": ["rest_framework.permissions.AllowAny"],
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': True,
     },
-    'PERSIST_AUTH': True,
-    # 'LOGIN_URL': 'rest_framework:login',
-    # 'LOGOUT_URL': 'rest_framework:logout'
+    'SECURITY': [{'Bearer': []}],
+    "AUTHENTICATION": [
+        {
+            "name": "Session",
+            "description": "Session-based authentication (for Django admin and browser-based sessions)",
+            "schema": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "Authorization",
+                "description": "Bearer token is required for JWT authentication. Admin panel uses session-based authentication.",
+            },
+        },
+        {
+            "name": "JWT",
+            "description": "JWT-based authentication",
+            "schema": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "Authorization",
+                "description": "Use Bearer token for JWT authentication.",
+            },
+        },
+    ],
 }
 
 SIMPLE_JWT = {
