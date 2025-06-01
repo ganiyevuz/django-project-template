@@ -13,4 +13,4 @@ python manage.py migrate --noinput
 
 # Start Gunicorn server
 echo "Starting Gunicorn..."
-exec gunicorn conf.wsgi:application --env DJANGO_SETTINGS_MODULE=conf.settings.prod --bind 0.0.0.0:8000 --workers 2
+exec gunicorn conf.wsgi:application --env DJANGO_SETTINGS_MODULE=conf.settings --bind 0.0.0.0:8000 --workers 2
