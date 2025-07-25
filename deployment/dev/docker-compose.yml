@@ -1,11 +1,17 @@
 services:
+
+  ######################
+  # Core Application Services
+  ######################
+
   backend:
     image: backed_image_name:0.0.1
-    restart: unless-stopped
     container_name: dev-backend
+    restart: unless-stopped
     volumes:
-      - dev_static_volume:/app/static
-      - dev_media_volume:/app/media
+      - static_volume:/app/static
+      - media_volume:/app/media
+      - sessions:/app/sessions
     depends_on:
       db:
         condition: service_healthy
@@ -20,30 +26,93 @@ services:
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       CACHE_BACKEND_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
       DOMAIN: ${BACKEND_DOMAIN}
+      WEBHOOK_DOMAIN: ${BOT_DOMAIN}
+      SESSIONS_DIR: '/app/sessions'
     networks:
       - app-network
       - shared-network
     labels:
       traefik.enable: "true"
-      traefik.http.routers.dev-web.rule: "Host(`${BACKEND_DOMAIN}`)"
-      traefik.http.routers.dev-web.entrypoints: "websecure"
-      traefik.http.routers.dev-web.tls.certresolver: "le"
-      traefik.http.services.dev-web.loadbalancer.server.port: "8000"
-      traefik.http.services.dev-web.loadbalancer.sticky: "true"
+      traefik.http.routers.dev-backend.rule: "Host(`${BACKEND_DOMAIN}`)"
+      traefik.http.routers.dev-backend.entrypoints: "websecure"
+      traefik.http.routers.dev-backend.tls.certresolver: "le"
+      traefik.http.services.dev-backend.loadbalancer.server.port: "8000"
       traefik.docker.network: "shared-network"
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-      restart_policy:
-        condition: on-failure
 
+  bot:
+    image: backed_image_name:0.0.1
+    container_name: dev-bot
+    entrypoint: [ "/aiobot-entrypoint.sh" ]
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_HOST: db
+      DATABASE_PORT: 5432
+      DATABASE_USER: ${DATABASE_USER}
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CACHE_BACKEND_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      BOT_TOKEN: ${BOT_TOKEN}
+      SENTRY_DSN: ${SENTRY_DSN}
+      USE_WEBHOOK: ${USE_WEBHOOK}
+      WEBHOOK_DOMAIN: ${BOT_DOMAIN}
+      ENABLE_METRICS: True
+    networks:
+      - app-network
+      - shared-network
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dev-bot.rule: "Host(`${BOT_DOMAIN}`)"
+      traefik.http.routers.dev-bot.entrypoints: "websecure"
+      traefik.http.routers.dev-bot.tls.certresolver: "le"
+      traefik.http.services.dev-bot.loadbalancer.server.port: "8000"
+      traefik.docker.network: "shared-network"
+
+  userbot:
+    image: userbot_image_name:0.0.1
+    container_name: dev-userbot
+    restart: unless-stopped
+    volumes:
+      - sessions:/app/sessions
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      API_ID: ${API_ID}
+      API_HASH: ${API_HASH}
+      SESSIONS_DIR: '/app/sessions'
+      API_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      USER_API_BASE_URL: https://${BACKEND_DOMAIN}/api/v1/management/userbots
+      CACHE_BACKEND_URL: redis://:${REDIS_PASSWORD}@redis:6379/3
+    networks:
+      - app-network
+      - shared-network
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dev-userbot.rule: "Host(`${USERBOT_DOMAIN}`)"
+      traefik.http.routers.dev-userbot.entrypoints: "websecure"
+      traefik.http.routers.dev-userbot.tls.certresolver: "le"
+      traefik.http.services.dev-userbot.loadbalancer.server.port: "8000"
+      traefik.docker.network: "shared-network"
+
+  ######################
+  # Databases & Queues
+  ######################
 
   db:
     image: postgres:16-alpine
-    restart: unless-stopped
     container_name: dev-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${DATABASE_USER}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
@@ -59,16 +128,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
     container_name: dev-redis
+    restart: unless-stopped
     command: [
       "redis-server",
       "--appendonly", "yes",
@@ -86,39 +150,103 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
 
-  nginx:
-    image: nginx:stable-alpine
+  ######################
+  # Monitoring Services
+  ######################
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    container_name: dev-prometheus
     restart: unless-stopped
     volumes:
-      - dev_static_volume:/usr/share/nginx/html/static:ro
-      - dev_media_volume:/usr/share/nginx/html/media:ro
-      - ./logs/nginx:/var/log/nginx
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - prometheus_data:/prometheus
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=7d'
+    ports:
+      - "9090:9090"
     networks:
       - app-network
-    depends_on:
-      backend:
-        condition: service_started
+      - shared-network
     labels:
       traefik.enable: "true"
-      traefik.http.routers.dev-staticfiles.rule: "Host(`${CDN_DOMAIN}`)"
-      traefik.http.routers.dev-staticfiles.entrypoints: "websecure"
-      traefik.http.routers.dev-staticfiles.tls.certresolver: "le"
-      traefik.http.services.dev-staticfiles.loadbalancer.server.port: "80"
-      traefik.http.middlewares.static-compress.compress: "true"
-      traefik.http.routers.dev-staticfiles.middlewares: "static-compress"
-      traefik.docker.network: "shared-network"
+      traefik.http.routers.dev-prometheus.rule: "Host(`${PROMETHEUS_DOMAIN}`)"
+      traefik.http.routers.dev-prometheus.entrypoints: "websecure"
+      traefik.http.routers.dev-prometheus.tls.certresolver: "le"
+      traefik.http.services.dev-prometheus.loadbalancer.server.port: "9090"
+
+  grafana:
+    image: grafana/grafana:12.0.2-ubuntu
+    container_name: dev-grafana
+    restart: unless-stopped
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "true"
+      GF_SERVER_DOMAIN: ${GRAFANA_DOMAIN}
+      GF_SERVER_ROOT_URL: https://${GRAFANA_DOMAIN}
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-piechart-panel,grafana-simple-json-datasource"
+    networks:
+      - app-network
+      - shared-network
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dev-grafana.rule: "Host(`${GRAFANA_DOMAIN}`)"
+      traefik.http.routers.dev-grafana.entrypoints: "websecure"
+      traefik.http.routers.dev-grafana.tls.certresolver: "le"
+      traefik.http.services.dev-grafana.loadbalancer.server.port: "3000"
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter
+    container_name: dev-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@db:5432/${DATABASE_NAME}?sslmode=disable"
+    networks:
+      - app-network
+
+  redis-exporter:
+    image: oliver006/redis_exporter
+    container_name: dev-redis-exporter
+    restart: unless-stopped
+    command:
+      - '--redis.addr=redis://dev-redis:6379'
+      - '--redis.password=${REDIS_PASSWORD}'
+    networks:
+      - app-network
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: dev-cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "8082:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - app-network
+
+  ######################
+  # Backup
+  ######################
+
   db_backup:
     image: ganiyevuz/postgres-backup-telegram
     container_name: dev-db-backup
+    restart: unless-stopped
     volumes:
-      - dev_postgres_backup:/backup
+      - postgres_backup:/backup
     environment:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
@@ -135,73 +263,31 @@ services:
         condition: service_healthy
     networks:
       - app-network
-    restart: unless-stopped
-
-  prometheus:
-    container_name: dev-prometheus
-    volumes:
-      - prometheus_data:/prometheus
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--web.enable-lifecycle'
-      - '--storage.tsdb.retention.time=7d'
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
-    networks:
-      - app-network
-      - shared-network
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.dev-prometheus.rule: "Host(`${PROMETHEUS_DOMAIN}`)"
-      traefik.http.routers.dev-prometheus.entrypoints: "websecure"
-      traefik.http.routers.dev-prometheus.tls.certresolver: "le"
-      traefik.http.services.dev-prometheus.loadbalancer.server.port: "9090"
-      traefik.http.routers.dev-prometheus.middlewares: "prometheus-auth"
-
-  grafana:
-    container_name: dev-grafana
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-      GF_USERS_ALLOW_SIGN_UP: "true"
-      GF_SERVER_DOMAIN: "${GRAFANA_DOMAIN}"
-      GF_SERVER_ROOT_URL: "https://${GRAFANA_DOMAIN}"
-      GF_AUTH_ANONYMOUS_ENABLED: "true"
-      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-piechart-panel,grafana-simple-json-datasource"
-    networks:
-      - app-network
-      - shared-network
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.dev-grafana.rule: "Host(`${GRAFANA_DOMAIN}`)"
-      traefik.http.routers.dev-grafana.entrypoints: "websecure"
-      traefik.http.routers.dev-grafana.tls.certresolver: "le"
-      traefik.http.services.dev-grafana.loadbalancer.server.port: "3000"
 
 volumes:
   postgres_data:
   redis_data:
   prometheus_data:
   grafana_data:
-  dev_static_volume:
+  static_volume:
     driver: local
     driver_opts:
       type: none
       device: /var/www/dev/static
       o: bind
-  dev_media_volume:
+  media_volume:
     driver: local
     driver_opts:
       type: none
       device: /var/www/dev/media
       o: bind
-  dev_postgres_backup:
+  sessions:
+    driver: local
+    driver_opts:
+      type: none
+      device: /var/www/dev/sessions
+      o: bind
+  postgres_backup:
 
 networks:
   app-network:

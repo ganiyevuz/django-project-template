@@ -1,18 +1,25 @@
 name: 🚀 CI/CD Pipeline for Deployment
+
 on:
-  push:
-    branches: [ branches ]
-  pull_request:
-    branches: [ branches ]
+  workflow_run:
+    workflows: [ "shared-services-backend-deploy" ]
+    types:
+      - completed
 
 env:
-  BACKEND_VERSION: v1.1
-  DOCKER_IMAGE: ${{ secrets.DOCKER_USERNAME }}/image-name
+  BACKEND_VERSION: v1.2
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
 
 jobs:
-  build-backend:
-    name: 🧱 Build & Push Backend
+  build-images:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    name: 🧱 Build & Push Images
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - backend
+          - userbot
 
     steps:
       - name: ⬇️ Checkout Repository
@@ -32,13 +39,12 @@ jobs:
       - name: ⚙️ Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: 🐳 Build & Push Backend Image
+      - name: 🐳 Build & Push Docker Image
         uses: docker/build-push-action@v4
         with:
-          context: .
-          file: ./deployment/Dockerfile
-          tags: |
-            ${{ env.DOCKER_IMAGE }}:${{ env.BACKEND_VERSION }}
+          context: ${{ matrix.service == 'backend' && '.' || './userbot' }}
+          file: ${{ matrix.service == 'backend' && './deployment/Dockerfile' || './userbot/Dockerfile' }}
+          tags: ${{ secrets.DOCKER_USERNAME }}/monitoring-${{ matrix.service }}:${{ env.BACKEND_VERSION }}
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -46,7 +52,7 @@ jobs:
   deploy:
     name: 🚀 Deploy to Server
     runs-on: ubuntu-latest
-    needs: [ build-backend ]
+    needs: build-images
 
     steps:
       - name: ⬇️ Checkout Repository
@@ -56,35 +62,52 @@ jobs:
         id: set_project_dir
         run: |
           if [[ "${{ github.ref }}" == "refs/heads/dev" ]]; then
-            echo "PROJECT_DIR=/var/www/dev" >> $GITHUB_ENV
-            echo "COMPOSE_FILE=deployment/dev/docker-compose.yml" >> $GITHUB_ENV
+            echo "PROJECT_ROOT=/var/www/dev" >> $GITHUB_ENV
+            echo "PROJECT_DIR=/var/www/dev/backend" >> $GITHUB_ENV
+            echo "DEPLOY_FOLDER=deployment/dev" >> $GITHUB_ENV
             echo "BACKEND_DOMAIN=${{ secrets.DEV_BACKEND_DOMAIN }}" >> $GITHUB_ENV
           else
-            echo "PROJECT_DIR=/var/www/prod" >> $GITHUB_ENV
-            echo "COMPOSE_FILE=deployment/prod/docker-compose.yml" >> $GITHUB_ENV
+            echo "PROJECT_ROOT=/var/www/prod" >> $GITHUB_ENV
+            echo "PROJECT_DIR=/var/www/prod/backend" >> $GITHUB_ENV
+            echo "DEPLOY_FOLDER=deployment/prod" >> $GITHUB_ENV
             echo "BACKEND_DOMAIN=${{ secrets.BACKEND_DOMAIN }}" >> $GITHUB_ENV
           fi
 
       - name: 🛠️ Generate .env for Backend
         run: |
           touch .env
+          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
+          echo "API_ID=${{ secrets.API_ID }}" >> .env
+          echo "API_HASH=${{ secrets.API_HASH }}" >> .env
           echo "DJANGO_SECRET_KEY=${{ secrets.SECRET_KEY }}" >> .env
-          echo "DJANGO_DEBUG=${{ secrets.DEBUG }}" >> .env
+          echo "DJANGO_DEBUG=${{ secrets.DJANGO_DEBUG }}" >> .env
           echo "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DATABASE_NAME }}" >> .env
           echo "DATABASE_USER=postgres" >> .env
+          echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" >> .env
+          echo "USE_WEBHOOK=${{ secrets.USE_WEBHOOK }}" >> .env
+          echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
+          echo "BOT_DOMAIN=${{ secrets.BOT_DOMAIN }}" >> .env
           echo "DJANGO_SUPERUSER_EMAIL=${{ secrets.DJANGO_SUPERUSER_EMAIL }}" >> .env
           echo "DJANGO_SUPERUSER_USERNAME=${{ secrets.DJANGO_SUPERUSER_USERNAME }}" >> .env
           echo "DJANGO_SUPERUSER_PASSWORD=${{ secrets.DJANGO_SUPERUSER_PASSWORD }}" >> .env
-          echo "ESKIZ_EMAIL=${{ secrets.ESKIZ_EMAIL }}" >> .env
-          echo "ESKIZ_PASSWORD=${{ secrets.ESKIZ_PASSWORD }}" >> .env
           echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> .env
-          echo "BACKEND_DOMAIN=${{ env.BACKEND_DOMAIN }}" >> .env
           echo "BACKEND_VERSION=${{ env.BACKEND_VERSION }}" >> .env
-          echo "DOCKER_IMAGE=${{ env.DOCKER_IMAGE }}" >> .env
+          echo "BACKEND_IMAGE=${{ secrets.DOCKER_USERNAME }}/monitoring-backend:${{ env.BACKEND_VERSION }}" >> .env
+          echo "USERBOT_IMAGE=${{ secrets.DOCKER_USERNAME }}/monitoring-userbot:${{ env.BACKEND_VERSION }}" >> .env
           echo "TELEGRAM_CHAT_IDS=${{ secrets.TELEGRAM_CHAT_IDS }}" >> .env
           echo "TELEGRAM_CHAT_ID=6990890693" >> .env
           echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> .env
+          echo "BACKEND_DOMAIN=${{ env.BACKEND_DOMAIN }}" >> .env
+          echo "PROMETHEUS_DOMAIN=${{ secrets.PROMETHEUS_DOMAIN }}" >> .env
+          echo "GRAFANA_DOMAIN=${{ secrets.GRAFANA_DOMAIN }}" >> .env
+          echo "USERBOT_DOMAIN=${{ secrets.USERBOT_DOMAIN }}" >> .env
+          echo "USE_S3_STORAGE=${{ secrets.USE_S3_STORAGE }}" >> .env
+          echo "AWS_S3_ENDPOINT_URL=${{ secrets.AWS_S3_ENDPOINT_URL }}" >> .env
+          echo "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" >> .env
+          echo "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" >> .env
+          echo "AWS_STORAGE_BUCKET_NAME=${{ secrets.AWS_STORAGE_BUCKET_NAME }}" >> .env
+          echo "AWS_S3_USE_SSL=${{ secrets.AWS_S3_USE_SSL }}" >> .env
 
       - name: 🔐 Setup SSH Access
         uses: webfactory/ssh-agent@v0.5.3
@@ -94,13 +117,18 @@ jobs:
       - name: 📁 Create Directories on Server
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
-            mkdir -p $PROJECT_DIR/static
-            mkdir -p $PROJECT_DIR/media
+            mkdir -p $PROJECT_ROOT/static
+            mkdir -p $PROJECT_ROOT/media
+            mkdir -p $PROJECT_ROOT/sessions
+            mkdir -p $PROJECT_DIR/grafana/provisioning/dashboards
+            mkdir -p $PROJECT_DIR/grafana/dashboards
+            mkdir -p $PROJECT_DIR/grafana/provisioning/datasources
+            mkdir -p $PROJECT_DIR/prometheus
           "
 
       - name: 📤 Upload Files to Server
         run: |
-          scp -o StrictHostKeyChecking=no deployment/deploy.sh .env ${{ env.COMPOSE_FILE }} ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$PROJECT_DIR/
+          scp -o StrictHostKeyChecking=no -r ${{ env.DEPLOY_FOLDER }}/* .env deployment/deploy.sh deployment/nginx.conf ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:$PROJECT_DIR/
           ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
             chmod +x $PROJECT_DIR/deploy.sh
           "
@@ -116,6 +144,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} "
             docker image prune -af && docker container prune -f
           "
+
       - name: ✅ Telegram Notification - Success
         if: success()
         uses: appleboy/telegram-action@master

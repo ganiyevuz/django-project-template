@@ -57,7 +57,9 @@ log "Backend Version: $BACKEND_VERSION"
 
 # Update docker-compose.yml
 log "Updating docker-compose.yml with backend image version..."
-sed -i "s|backed_image_name:.*|${DOCKER_IMAGE}:${BACKEND_VERSION}|g" docker-compose.yml
+sed -i "s|backed_image_name:.*|${BACKEND_IMAGE}|g" docker-compose.yml
+sed -i "s|userbot_image_name:.*|${USERBOT_IMAGE}|g" docker-compose.yml
+sed -i "s|bot_image_name:.*|${BOT_IMAGE}|g" docker-compose.yml
 
 # Pull, stop old, start new
 log "Pulling Docker images..."
@@ -111,15 +113,15 @@ log "Checking/creating superuser..."
 SUPERUSER_RESULT=$(docker compose exec backend python3 manage.py shell -c "
 from django.contrib.auth import get_user_model;
 User = get_user_model();
-if not User.objects.filter(phone='${DJANGO_SUPERUSER_PHONE:-admin}').exists():
-    User.objects.create_superuser('${DJANGO_SUPERUSER_PHONE:-admin}', '${DJANGO_SUPERUSER_EMAIL:-admin@example.com}', '${DJANGO_SUPERUSER_PASSWORD:-admin_password}')
+if not User.objects.filter(username='${DJANGO_SUPERUSER_EMAIL:-admin@example.com}').exists():
+    User.objects.create_superuser('${DJANGO_SUPERUSER_EMAIL:-admin@example.com}', '${DJANGO_SUPERUSER_PASSWORD:-admin_password}')
     print('created')
 else:
     print('exists')
 ")
 
 if [[ "$SUPERUSER_RESULT" == *"created"* ]]; then
-  SUPERUSER_STATUS="👤 *Superuser created*\n*Phone:* \`${DJANGO_SUPERUSER_PHONE:-admin}\`\n*Password:* \`${DJANGO_SUPERUSER_PASSWORD:-admin_password}\`"
+  SUPERUSER_STATUS="👤 *Superuser created*\n*Email:* \`${DJANGO_SUPERUSER_EMAIL:-admin}\`\n*Password:* \`${DJANGO_SUPERUSER_PASSWORD:-admin_password}\`"
 else
   SUPERUSER_STATUS="👤 *Superuser exists*"
 fi

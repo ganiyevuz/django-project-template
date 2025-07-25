@@ -11,7 +11,7 @@ services:
       - "--entrypoints.websecure.address=:443"
       - "--certificatesresolvers.le.acme.httpchallenge=true"
       - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL:-ssl@birgalikda.com}"
+      - "--certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}"
       - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
       - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
       - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
@@ -38,39 +38,42 @@ services:
     image: minio/minio
     container_name: shared-minio
     restart: unless-stopped
-    volumes:
-      - minio_data:/data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
       - "9001:9001"
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
     networks:
       - shared-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 30s
       timeout: 20s
       retries: 3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
     labels:
       traefik.enable: "true"
-      traefik.http.routers.minio-api.rule: "Host(`s3.${DOMAIN:-example.com}`)"
+
+      # API router
+      traefik.http.routers.minio-api.rule: "Host(`s3.${DOMAIN}`)"
       traefik.http.routers.minio-api.entrypoints: "websecure"
       traefik.http.routers.minio-api.tls.certresolver: "le"
-      traefik.http.services.minio-api.loadbalancer.server.port: "9000"
-      traefik.http.routers.minio-console.rule: "Host(`minio.${DOMAIN:-example.com}`)"
+      traefik.http.routers.minio-api.service: "minio-api-service"
+      traefik.http.services.minio-api-service.loadbalancer.server.port: "9000"
+
+      # Console router
+      traefik.http.routers.minio-console.rule: "Host(`minio.${DOMAIN}`)"
       traefik.http.routers.minio-console.entrypoints: "websecure"
       traefik.http.routers.minio-console.tls.certresolver: "le"
-      traefik.http.services.minio-console.loadbalancer.server.port: "9001"
+      traefik.http.routers.minio-console.service: "minio-console-service"
+      traefik.http.services.minio-console-service.loadbalancer.server.port: "9001"
+
       prometheus.enable: "true"
       prometheus.path: "/minio/v2/metrics/cluster"
+
 volumes:
   minio_data:
     driver: local
